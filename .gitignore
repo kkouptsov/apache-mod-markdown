@@ -1,4 +1,6 @@
+.gitignore
 .deps/
 .libs/
 autom4te.cache/
+/.vscode/
 run
