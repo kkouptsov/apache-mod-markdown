@@ -74,11 +74,22 @@ typedef struct {
 } markdown_conf;
 
 #define P(s) ap_rputs(s, r)
+
+void set_default_flags(mkd_flag_t* flags)
+{
+    mkd_init_flags(flags);
 #ifdef MKD_FENCEDCODE
-#define DEFAULT_MKD_FLAGS (MKD_TOC | MKD_AUTOLINK | MKD_FENCEDCODE)
+/* #define DEFAULT_MKD_FLAGS (MKD_TOC | MKD_AUTOLINK | MKD_FENCEDCODE) */
+    mkd_set_flag_num(flags, MKD_TOC);
+    mkd_set_flag_num(flags, MKD_AUTOLINK);
+    mkd_set_flag_num(flags, MKD_FENCEDCODE);
 #else
-#define DEFAULT_MKD_FLAGS (MKD_TOC | MKD_AUTOLINK )
+/* #define DEFAULT_MKD_FLAGS (MKD_TOC | MKD_AUTOLINK ) */
+    mkd_set_flag_num(flags, MKD_TOC);
+    mkd_set_flag_num(flags, MKD_AUTOLINK);
 #endif
+}
+
 
 /* XML - Wikipedia
  * https://en.wikipedia.org/wiki/XML */
@@ -147,7 +158,7 @@ int markdown_output(MMIOT *doc, request_rec *r, markdown_conf *conf)
     char *p;
     int result;
 
-    mkd_compile(doc, conf->mkd_flags);
+    mkd_compile(doc, &conf->mkd_flags);
 
     if (conf->headerfile == NULL) {
         result = markdown_doc_header(doc, r, conf);
@@ -411,14 +422,13 @@ static int markdown_handler(request_rec *r)
 }
 
 
-
 static void *markdown_config(apr_pool_t * p, char *dummy)
 {
     markdown_conf *c =
         (markdown_conf *) apr_pcalloc(p, sizeof(markdown_conf));
     memset(c, 0, sizeof(markdown_conf));
     c->doctype = HTML_4_01_TRANSITIONAL;
-    c->mkd_flags = DEFAULT_MKD_FLAGS;
+    set_default_flags(&c->mkd_flags);
     c->wrapper = 1;
     return (void *) c;
 }
@@ -525,22 +535,8 @@ static const char *set_markdown_footerfile(cmd_parms * cmd, void *conf,
 static const char *set_markdown_flags(cmd_parms * cmd, void *conf,
 									   const char *arg)
 {
-    long int flags;
     markdown_conf *c = (markdown_conf *) conf;
-
-    flags = strtol(arg, NULL, 0);
-    if(flags < 0 || flags > UINT_MAX){
-        /* Currently mkd_flag_t is an unsigned integer */
-
-        /* Invalid(out of range) flag, setting flag to the
-         * current default */
-        ap_log_error(APLOG_MARK, APLOG_WARNING, 0, NULL, "apache-mod-markdown: Flags \"%#lX\" "
-                     "invalid, setting to default value \"%#X\".\n",
-                     flags, DEFAULT_MKD_FLAGS);
-        c->mkd_flags = DEFAULT_MKD_FLAGS;
-    }else{
-        c->mkd_flags = flags;
-    }
+    mkd_set_flag_string(&c->mkd_flags, arg);
     return NULL;
 }
 
@@ -553,7 +549,7 @@ static void *markdown_config_server_create(apr_pool_t *p, server_rec *s)
 
     c->wrapper    = 1;
     c->doctype    = HTML_4_01_TRANSITIONAL;
-    c->mkd_flags  = DEFAULT_MKD_FLAGS;
+    set_default_flags(&c->mkd_flags);
     c->headerfile = NULL;
     c->footerfile = NULL;
     c->header     = NULL;
@@ -578,12 +574,16 @@ static void *markdown_config_server_merge(apr_pool_t *p, void *BASE, void *ADD)
 
     c->wrapper    = ( dir->wrapper    == 0          ? base->wrapper    : dir->wrapper);
     c->doctype    = ( dir->doctype    == HTML_UNSET ? base->doctype    : dir->doctype);
-    c->mkd_flags  = ( dir->mkd_flags  == 0          ? base->mkd_flags  : dir->mkd_flags);
     c->headerfile = ( dir->headerfile == NULL       ? base->headerfile : dir->headerfile);
     c->footerfile = ( dir->footerfile == NULL       ? base->footerfile : dir->footerfile);
     c->header     = ( dir->header     == NULL       ? base->header     : dir->header);
     c->footer     = ( dir->footer     == NULL       ? base->footer     : dir->footer);
     c->css        = ( dir->css        == NULL       ? base->css        : dir->css);
+
+    if (mkd_flag_is_any_set(&dir->mkd_flags))
+        mkd_copy_flags_inplace(&c->mkd_flags, &dir->mkd_flags);
+    else
+        mkd_copy_flags_inplace(&c->mkd_flags, &base->mkd_flags);
 
     ap_log_perror(APLOG_MARK, APLOG_DEBUG, 0, p, "markdown_config_server_merge(): finished with%s BASE, with%s ADD (%d = %d ? %d)",
         (BASE == NULL ? "out" : ""),
@@ -604,12 +604,13 @@ static void *markdown_config_per_dir_create(apr_pool_t * p, char *context)
 
     c->wrapper    = 0;
     c->doctype    = HTML_UNSET;
-    c->mkd_flags  = 0;
     c->headerfile = NULL;
     c->footerfile = NULL;
     c->header     = NULL;
     c->footer     = NULL;
     c->css        = NULL;
+
+    mkd_init_flags(&c->mkd_flags);
 
     ap_log_perror(APLOG_MARK, APLOG_DEBUG, 0, p, "markdown_config_per_dir_create(): finished with%s context (%d)",
         (context == NULL ? "out" : ""), c->doctype);
@@ -629,12 +630,16 @@ static void *markdown_config_per_dir_merge(apr_pool_t * p, void *BASE, void *ADD
 
     c->wrapper    = ( dir->wrapper    == 0          ? base->wrapper    : dir->wrapper);
     c->doctype    = ( dir->doctype    == HTML_UNSET ? base->doctype    : dir->doctype);
-    c->mkd_flags  = ( dir->mkd_flags  == 0          ? base->mkd_flags  : dir->mkd_flags);
     c->headerfile = ( dir->headerfile == NULL       ? base->headerfile : dir->headerfile);
     c->footerfile = ( dir->footerfile == NULL       ? base->footerfile : dir->footerfile);
     c->header     = ( dir->header     == NULL       ? base->header     : dir->header);
     c->footer     = ( dir->footer     == NULL       ? base->footer     : dir->footer);
     c->css        = ( dir->css        == NULL       ? base->css        : dir->css);
+
+    if (mkd_flag_is_any_set(&dir->mkd_flags))
+        mkd_copy_flags_inplace(&c->mkd_flags, &dir->mkd_flags);
+    else
+        mkd_copy_flags_inplace(&c->mkd_flags, &base->mkd_flags);
 
     ap_log_perror(APLOG_MARK, APLOG_DEBUG, 0, p, "markdown_config_per_dir_merge(): finished with%s BASE, with%s ADD (%d = %d ? %d)",
         (BASE == NULL ? "out" : ""),
